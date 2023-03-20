@@ -1,5 +1,4 @@
 django-auditlog-with-elasticsearch-indexing
 ===========================================
 
-It's the same package for django-auditlog, plus adding the functionality of indexing the logs to Elasticsearch.
-
+Traching model changes the same way the main auditlog works, but indexing the generated logs to Elasticsearch. 
