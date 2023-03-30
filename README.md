@@ -9,13 +9,13 @@ Prerequisites
 -------------
 
 In order to setup a communication channel with Elasticsearch, Override the `conf.py` file to add the Elasticsearch host, password and cloud_id.
-
+```
 conf.py: 
   .
   .
-  .
-  
+
+  # Elasticsearch configurations
   ELASTIC_USER=''
   ELASTIC_PASSWORD=''
   CLOUD_ID=''
-
+```
