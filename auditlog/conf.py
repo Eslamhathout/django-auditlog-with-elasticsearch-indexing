@@ -20,3 +20,8 @@ settings.AUDITLOG_INCLUDE_TRACKING_MODELS = getattr(
 settings.AUDITLOG_DISABLE_ON_RAW_SAVE = getattr(
     settings, "AUDITLOG_DISABLE_ON_RAW_SAVE", False
 )
+
+# Elasticsearch configurations
+ELASTIC_USER=None
+ELASTIC_PASSWORD=None
+CLOUD_ID=None
