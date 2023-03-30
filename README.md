@@ -15,7 +15,6 @@ conf.py:
   .
   .
   
-  # TODO: Elasticsearch configurations
   ELASTIC_USER=''
   ELASTIC_PASSWORD=''
   CLOUD_ID=''
