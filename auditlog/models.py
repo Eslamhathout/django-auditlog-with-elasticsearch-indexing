@@ -14,6 +14,7 @@ from django.utils.encoding import smart_str
 from django.utils.translation import gettext_lazy as _
 from decouple import config
 from elasticsearch import AuthenticationException, Elasticsearch
+from auditlog import conf
 
 class LogEntryManager(models.Manager):
     """
@@ -24,7 +25,6 @@ class LogEntryManager(models.Manager):
         """
         Helper method to create a new log entry. This method automatically populates some fields when no
         explicit value is given.
-
         :param instance: The model instance to log a change for.
         :type instance: Model
         :param kwargs: Field overrides for the :py:class:`LogEntry` object.
@@ -51,11 +51,11 @@ class LogEntryManager(models.Manager):
             # This should only be necessary when an pk is used twice.
             if kwargs.get("action", None) is LogEntry.Action.CREATE:
                 if (
-                    kwargs.get("object_id", None) is not None
-                    and self.filter(
-                        content_type=kwargs.get("content_type"),
-                        object_id=kwargs.get("object_id"),
-                    ).exists()
+                        kwargs.get("object_id", None) is not None
+                        and self.filter(
+                    content_type=kwargs.get("content_type"),
+                    object_id=kwargs.get("object_id"),
+                ).exists()
                 ):
                     self.filter(
                         content_type=kwargs.get("content_type"),
@@ -66,18 +66,32 @@ class LogEntryManager(models.Manager):
                         content_type=kwargs.get("content_type"),
                         object_pk=kwargs.get("object_pk", ""),
                     ).delete()
-
-            log_entry =  self.create(**kwargs)
-            #self.log_on_elk(log_entry, instance)
-            print("logged to elk")
-            return log_entry
+            log_entry = self.create(**kwargs)
+            self.log_on_elk(log_entry, instance)
+            return None
         return None
+
+    def log_on_elk(self, log_entry, instance):
+        action = 'update' if log_entry.action == 1 else 'create'
+        changed_field = json.loads(log_entry.changes)
+
+        if action == 'create':
+            changed_field = self._get_created_fields_data(json.loads(log_entry.changes))
+        log_doc = {
+            'user': log_entry.actor.username if log_entry.actor else 'system',
+            'id': log_entry.object_id,
+            'action': action,
+            'timestamp': timezone.now()
+        }
+        log_doc.update(changed_field)
+        _client = self._get_client()
+        _client.index(index='log-entry', document=log_doc)
 
     def _get_client(self):
         _client = None
-        ELASTIC_USER = config("ELASTIC_USER", None)
-        ELASTIC_PASSWORD = config("ELASTIC_PASSWORD", None)
-        CLOUD_ID = config("CLOUD_ID", None)
+        ELASTIC_USER = conf.ELASTIC_USER
+        ELASTIC_PASSWORD = conf.ELASTIC_PASSWORD
+        CLOUD_ID = conf.CLOUD_ID
 
         if ELASTIC_USER and ELASTIC_PASSWORD and CLOUD_ID:
             try:
@@ -89,33 +103,14 @@ class LogEntryManager(models.Manager):
 
     def _get_created_fields_data(self, log_changes):
         result = {}
-        for k,v in log_changes.items():
+        for k, v in log_changes.items():
             result[k] = v[1]
         return result
-            
-    def log_on_elk(self, log_entry, instance):
-        action = 'update' if log_entry.action == 1 else 'create'
-        changed_field = json.loads(log_entry.changes)
-
-        if action == 'create':
-            changed_field = self._get_created_fields_data(json.loads(log_entry.changes))
-
-        log_doc = {
-            'user': log_entry.actor if log_entry.actor else 'system',
-            'id': log_entry.object_id,
-            'action': 'update' if log_entry.action == 1 else 'create',
-            'timestamp': timezone.now()
-        }
-        log_doc.update(changed_field)
-
-        _client = self._get_client()
-        _client.index(index=instance._meta.model.__name__.lower() + 'log', document=log_doc)
 
     def log_m2m_changes(
-        self, changed_queryset, instance, operation, field_name, **kwargs
+            self, changed_queryset, instance, operation, field_name, **kwargs
     ):
         """Create a new "changed" log entry from m2m record.
-
         :param changed_queryset: The added or removed related objects.
         :type changed_queryset: QuerySet
         :param instance: The model instance to log a change for.
@@ -162,7 +157,6 @@ class LogEntryManager(models.Manager):
     def get_for_object(self, instance):
         """
         Get log entries for the specified model instance.
-
         :param instance: The model instance to get log entries for.
         :type instance: Model
         :return: QuerySet of log entries for the given model instance.
@@ -183,7 +177,6 @@ class LogEntryManager(models.Manager):
     def get_for_objects(self, queryset):
         """
         Get log entries for the objects in the specified queryset.
-
         :param queryset: The queryset to get the log entries for.
         :type queryset: QuerySet
         :return: The LogEntry objects for the objects in the given queryset.
@@ -220,7 +213,6 @@ class LogEntryManager(models.Manager):
     def get_for_model(self, model):
         """
         Get log entries for all objects of a specified type.
-
         :param model: The model to get log entries for.
         :type model: class
         :return: QuerySet of log entries for the given model.
@@ -237,7 +229,6 @@ class LogEntryManager(models.Manager):
     def _get_pk_value(self, instance):
         """
         Get the primary key field value for a model instance.
-
         :param instance: The model instance to get the primary key for.
         :type instance: Model
         :return: The primary key value of the given model instance.
@@ -256,7 +247,6 @@ class LogEntry(models.Model):
     Represents an entry in the audit log. The content type is saved along with the textual and numeric
     (if available) primary key, as well as the textual representation of the object when it was saved.
     It holds the action performed and the fields that were changed in the transaction.
-
     If AuditlogMiddleware is used, the actor will be set automatically. Keep in mind that
     editing / re-saving LogEntry instances may set the actor to a wrong value - editing LogEntry
     instances is not recommended (and it should not be necessary).
@@ -268,7 +258,6 @@ class LogEntry(models.Model):
         is not logged. The values of the actions are numeric, a higher integer value means a more intrusive
         action. This may be useful in some cases when comparing actions because the ``__lt``, ``__lte``,
         ``__gt``, ``__gte`` lookup filters can be used in queries.
-
         The valid actions are :py:attr:`Action.CREATE`, :py:attr:`Action.UPDATE` and :py:attr:`Action.DELETE`.
         """
 
@@ -353,7 +342,6 @@ class LogEntry(models.Model):
         Return the changes recorded in this log entry as a string. The formatting of the string can be
         customized by setting alternate values for colon, arrow and separator. If the formatting is still
         not satisfying, please use :py:func:`LogEntry.changes_dict` and format the string yourself.
-
         :param colon: The string to place between the field name and the values.
         :param arrow: The string to place between each old and new value.
         :param separator: The string to place between each field.
@@ -451,14 +439,11 @@ class AuditlogHistoryField(GenericRelation):
     """
     A subclass of py:class:`django.contrib.contenttypes.fields.GenericRelation` that sets some default
     variables. This makes it easier to access Auditlog's log entries, for example in templates.
-
     By default this field will assume that your primary keys are numeric, simply because this is the most
     common case. However, if you have a non-integer primary key, you can simply pass ``pk_indexable=False``
     to the constructor, and Auditlog will fall back to using a non-indexed text based field for this model.
-
     Using this field will not automatically register the model for automatic logging. This is done so you
     can be more flexible with how you use this field.
-
     :param pk_indexable: Whether the primary key for this model is not an :py:class:`int` or :py:class:`long`.
     :type pk_indexable: bool
     :param delete_related: By default, including a generic relation into a model will cause all related
